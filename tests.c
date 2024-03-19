@@ -12,7 +12,7 @@ void printIntArrayList(ArrayList *list) {
 void printIntLinkedList(LinkedList *list) {
     Node *current = list->nodes;
     while (current != NULL) {
-        printf("%d ", *((int *)current->value));
+        printf("%d ", (int)current->value);
         current = current->next;
     }
     printf("\n");
@@ -57,7 +57,7 @@ void testArrayList() {
 void testLinkedList() {
     printf("\nLinkedList Test:\n");
 
-    LinkedList *intLinkedList = ll_new();
+    LinkedList *intLinkedList = ll_new(sizeof(int));
 
 
     int a = 10, b = 20, c = 30;
