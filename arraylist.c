@@ -14,6 +14,9 @@ typedef struct {
 ArrayList* al_new(size_t elementSize){
     ArrayList* newList = calloc(1, sizeof(ArrayList));
     newList->elementSize = elementSize;
+    newList->length = 0;
+    newList->capacity = 0;
+    
     return newList;
 }
 
