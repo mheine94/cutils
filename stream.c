@@ -5,13 +5,15 @@
 typedef struct {
     int pos;
     void* curernt;
+    size_t elementSize;
 } StreamElement;
 typedef void* (*Operation)(void* value);
 typedef int (*Predicate)(void* value);
 
 typedef enum t_so {
     FILTER,
-    TRANSFORM
+    TRANSFORM,
+    TRANSFORM_NEW_T
 } StreamOperationType;
 
 typedef StreamElement (*Transform)(StreamElement se, Operation);
@@ -20,6 +22,7 @@ typedef struct se{
     StreamOperationType type;
     Operation op;
     Predicate pred; 
+    size_t newElementSize;
 } StreamOperation ;
 
 typedef struct ss {
@@ -59,48 +62,88 @@ Stream strm_of(ArrayList* list){
     return s;
 }
 
-StreamElement apply(StreamElement se, StreamOperation o){
+StreamElement apply(Stream* st, StreamElement se, StreamOperation o){
     printf("apply\n");
     printf("current is %d\n", *((int*)(se.curernt)));
     if(o.type == TRANSFORM) {
         
         void* result = o.op(se.curernt);
-        printf("after double is %d\n", *((int*)(result)));
         // what about the old value?
         se.curernt = result;
         return se;
+    } else if(o.type == TRANSFORM_NEW_T){
+        void* result = o.op(se.curernt);
+        // what about the old value?
+        se.curernt = result;
+        se.elementSize = o.newElementSize;
+        return se;
     } else if(o.type == FILTER){
-        printf("filter not yet implemented\n");
+        if(o.pred(se.curernt) == 1) {
+            printf("kept by filter\n");
+            return se;
+        }else{
+            printf("filtered out\n");
+            return strm_getNext(st, se);
+        }
         return se;
     }
 }
 
-Stream strm_map(Stream* st, Operation op){
+Stream* strm_map(Stream* st, Operation op){
     StreamOperation so = {
         .type = TRANSFORM,
-        .op = op
+        .op = op,
+        .newElementSize = 0
     };
     al_add(st->streamOps, &so);
     st->operationCount++;
+    return st;
+}
+Stream* strm_map_to(Stream* st, Operation op, size_t newElementSize){
+    StreamOperation so = {
+        .type = TRANSFORM_NEW_T,
+        .op = op,
+        .newElementSize = newElementSize
+    };
+    al_add(st->streamOps, &so);
+    st->operationCount++;
+    return st;
 }
 
-Stream strm_filter(Stream st, StreamElement(*filter)(StreamElement se)){
+
+Stream* strm_filter(Stream* st, Predicate pred){
     //al_add(st.transForms, filter);
+    StreamOperation so = {
+        .type = FILTER,
+        .pred = pred
+    };
+    al_add(st->streamOps, &so);
+    st->operationCount++;
+    return st;
 }
 
+typedef void* (*Allocator)(size_t elementSize);
+typedef int (*Accumulator)(void* collection, void* value);
 typedef struct {
-    void* (*allocate)(size_t elementSize);
-    int (*accumulate)(void* collection, void* value);
+    Allocator allocate;
+    Accumulator accumulate;
 } Collector;
 
 
 
 StreamElement strm_start(Stream* st){
     StreamElement se = {
-        -1,
-        0        
+        .pos = -1,
+        .curernt = 0,
+        .elementSize = st->source->elementSize
     };
     return st->getNext((void*)st, se);
+}
+
+int even(void* val){
+    printf("even\n");
+    int* i = val;
+    return *i % 2 == 0;
 }
 
 void* doubleIt(void* val){
@@ -110,9 +153,18 @@ void* doubleIt(void* val){
     return i;
 }
 
+void* toDouble(void* val){
+    printf("toDouble\n");
+    int* i = val;
+    double* new = malloc(sizeof(double));
+    *new = (double) *i;
+    printf("double val %f\n", *new);
+    return new;
+}
+
 void* strm_collect(Stream* st, Collector collector){
     
-    void* collection = collector.allocate(st->source->elementSize);
+    void* collection = 0;
 
     StreamElement se = strm_start(st);
     int stop = 0;
@@ -130,49 +182,85 @@ void* strm_collect(Stream* st, Collector collector){
 
             printf("get operand i=%d\n", i);
             StreamOperation so = *((StreamOperation*) al_get(st->streamOps, i));
-            se = apply(se, so);
+            se = apply(st, se, so);
         }
-
+        if(collection == 0){
+             collection = collector.allocate(se.elementSize);
+        }
         stop = collector.accumulate(collection, se.curernt);
     } while (stop == 0);
 
     return collection;
 }
+struct test {
+    int a;
+};
 
-
-int al_addWrapper(void* list, void* value){
-    printf("al_addWrapper\n");
-    al_add((ArrayList*) list, value);
-    return 0;
+void* toTest(void* val){
+    printf("toTest\n");
+    int* i = val;
+    struct test* new = malloc(sizeof(struct test));
+    new->a = 5;
+    return new;
 }
 
-void* al_newWrapper(size_t elementSize){
-    return al_new(elementSize);
+
+void* testToInt(void* val){
+    printf("toTest\n");
+    struct test* value = val;
+    int* new = malloc(sizeof(int));
+    *new = value->a;
+    return new;
 }
+
+void printDoubleArrayList(ArrayList *list) {
+    for (int i = 0; i < list->length; ++i) {
+        printf("%f ", *((double *)al_get(list, i)));
+    }
+}
+
 void printIntArrayList(ArrayList *list) {
     for (int i = 0; i < list->length; ++i) {
         printf("%d ", *((int *)al_get(list, i)));
     }
-    printf("\n");
 }
 
+void printTestArrayList(ArrayList *list) {
+    for (int i = 0; i < list->length; ++i) {
+        printf("%d ", ((struct test *)al_get(list, i))->a);
+    }
+}
 
 void main(){
     ArrayList* al = al_new(sizeof(int));
-    int a = 2;
-    int b = 3;
-    int cl = 5;
-    al_add(al,&a);
-    al_add(al,&b);
-    al_add(al,&cl);
+    int n1 = 1;
+    int n2 = 2;
+    int n3 = 3;
+    int n4 = 4;
+    int n5 = 5;
+    int n6 = 6;
+    al_add(al,&n1);
+    al_add(al,&n2);
+    al_add(al,&n3);
+    al_add(al,&n3);
+    al_add(al,&n4);
+    al_add(al,&n5);
+    al_add(al,&n6);
     Stream st = strm_of(al);
+    strm_filter(&st,even); 
     strm_map(&st, doubleIt);
-    
+    strm_map_to(&st, toTest, sizeof(struct test));
+    strm_map_to(&st, testToInt, sizeof(int));
+    strm_map(&st, doubleIt);
+    strm_map_to(&st, toDouble, sizeof(double));
+
     Collector c = {
-        .allocate = al_newWrapper,
-        .accumulate = al_addWrapper
+        .allocate = (Allocator) al_new,
+        .accumulate = (Accumulator) al_add
     };
     ArrayList* collected = (ArrayList*) strm_collect(&st, c);
     printf("collected result\n");
-    printIntArrayList(collected);
+    printf("[ ");
+    printDoubleArrayList(collected);
+    printf(" ]");
 }
