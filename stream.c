@@ -7,11 +7,25 @@ typedef struct {
     void* curernt;
 } StreamElement;
 typedef void* (*Operation)(void* value);
+typedef int (*Predicate)(void* value);
+
+typedef enum t_so {
+    FILTER,
+    TRANSFORM
+} StreamOperationType;
+
+typedef StreamElement (*Transform)(StreamElement se, Operation);
+typedef StreamElement (*Filter)(StreamElement se, Predicate);
+typedef struct se{
+    StreamOperationType type;
+    Operation op;
+    Predicate pred; 
+} StreamOperation ;
 
 typedef struct ss {
     ArrayList* source;
-    int operationCount ;
-    Operation transForms[50];
+    int operationCount;
+    ArrayList* streamOps;
     StreamElement (*getNext)(void* strm,  StreamElement se);
 } Stream;
 
@@ -39,24 +53,35 @@ Stream strm_of(ArrayList* list){
     Stream s = {
         .source = list,
         .getNext = (StreamElement (*)(void*, StreamElement se)) strm_getNext,
-        .operationCount = 0
+        .operationCount = 0,
+        .streamOps = al_new(sizeof(StreamOperation))
     };
     return s;
 }
 
-StreamElement apply(StreamElement se, Operation o){
+StreamElement apply(StreamElement se, StreamOperation o){
     printf("apply\n");
     printf("current is %d\n", *((int*)(se.curernt)));
-    void* result = o(se.curernt);
-
-    printf("after double is %d\n", *((int*)(result)));
-    // what about the old value?
-    se.curernt = result;
-    return se;
+    if(o.type == TRANSFORM) {
+        
+        void* result = o.op(se.curernt);
+        printf("after double is %d\n", *((int*)(result)));
+        // what about the old value?
+        se.curernt = result;
+        return se;
+    } else if(o.type == FILTER){
+        printf("filter not yet implemented\n");
+        return se;
+    }
 }
 
 Stream strm_map(Stream* st, Operation op){
-    st->transForms[st->operationCount++] = op;
+    StreamOperation so = {
+        .type = TRANSFORM,
+        .op = op
+    };
+    al_add(st->streamOps, &so);
+    st->operationCount++;
 }
 
 Stream strm_filter(Stream st, StreamElement(*filter)(StreamElement se)){
@@ -104,8 +129,8 @@ void* strm_collect(Stream* st, Collector collector){
         for(int i = 0; i < st->operationCount; i++){
 
             printf("get operand i=%d\n", i);
-            Operation op =(Operation) st->transForms[i];
-            se = apply(se, op);
+            StreamOperation so = *((StreamOperation*) al_get(st->streamOps, i));
+            se = apply(se, so);
         }
 
         stop = collector.accumulate(collection, se.curernt);
