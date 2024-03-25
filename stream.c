@@ -1,6 +1,7 @@
 #include "arraylist.h"
 #include "linkedlist.h"
 #include <stdio.h>
+#include <string.h>
 
 typedef struct {
     int pos;
@@ -19,6 +20,7 @@ typedef enum t_so {
 typedef StreamElement (*Transform)(StreamElement se, Operation);
 typedef StreamElement (*Filter)(StreamElement se, Predicate);
 typedef struct se{
+    size_t pos;
     StreamOperationType type;
     Operation op;
     Predicate pred; 
@@ -36,13 +38,14 @@ typedef struct ss {
 
 typedef StreamElement(*Transformer)(StreamElement se);
 StreamElement strm_getNext(Stream* st, StreamElement se){
-    printf("strm_getNext - st source len is %d and se pos is %d\n", st->source->length, se.pos);
-    if(se.pos < st->source->length){    
+    if(se.pos + 1 < st->source->length){    
         StreamElement next = {
             .pos = se.pos+1,
-            .curernt = al_get(st->source, se.pos)
+            .curernt = malloc(st->source->elementSize),
+            .elementSize = st->source->elementSize
         };
-      return next;
+        memcpy(next.curernt, al_get(st->source, se.pos + 1), st->source->elementSize);
+        return next;
     }
      
     StreamElement end = {
@@ -62,38 +65,46 @@ Stream strm_of(ArrayList* list){
     return s;
 }
 
+StreamElement applyUntil(Stream* st, StreamElement se, int index);
+StreamElement applyFilter(Stream* st, StreamElement se, StreamOperation o){
+    if(o.pred(se.curernt) == 1) {
+        return se;
+    }else{
+        StreamElement nextElement =  strm_getNext(st, se);
+        if(nextElement.pos == -1){
+            return nextElement;
+        }
+        nextElement = applyUntil(st, nextElement, o.pos);
+        return applyFilter(st, nextElement, o);
+    }
+}
+
 StreamElement apply(Stream* st, StreamElement se, StreamOperation o){
-    printf("apply\n");
-    printf("current is %d\n", *((int*)(se.curernt)));
+    if(se.pos == -1){
+        return se;
+    }
     if(o.type == TRANSFORM) {
-        
         void* result = o.op(se.curernt);
-        // what about the old value?
         se.curernt = result;
         return se;
     } else if(o.type == TRANSFORM_NEW_T){
         void* result = o.op(se.curernt);
-        // what about the old value?
         se.curernt = result;
         se.elementSize = o.newElementSize;
         return se;
     } else if(o.type == FILTER){
-        if(o.pred(se.curernt) == 1) {
-            printf("kept by filter\n");
-            return se;
-        }else{
-            printf("filtered out\n");
-            return strm_getNext(st, se);
-        }
-        return se;
+        return applyFilter(st, se, o); 
     }
+    printf("unsupported\n");
+    exit(1);
 }
 
 Stream* strm_map(Stream* st, Operation op){
     StreamOperation so = {
         .type = TRANSFORM,
         .op = op,
-        .newElementSize = 0
+        .newElementSize = 0,
+        .pos = st->streamOps->length
     };
     al_add(st->streamOps, &so);
     st->operationCount++;
@@ -103,7 +114,8 @@ Stream* strm_map_to(Stream* st, Operation op, size_t newElementSize){
     StreamOperation so = {
         .type = TRANSFORM_NEW_T,
         .op = op,
-        .newElementSize = newElementSize
+        .newElementSize = newElementSize,
+        .pos = st->streamOps->length
     };
     al_add(st->streamOps, &so);
     st->operationCount++;
@@ -112,10 +124,11 @@ Stream* strm_map_to(Stream* st, Operation op, size_t newElementSize){
 
 
 Stream* strm_filter(Stream* st, Predicate pred){
-    //al_add(st.transForms, filter);
     StreamOperation so = {
         .type = FILTER,
-        .pred = pred
+        .pred = pred,
+        .pos = st->streamOps->length,
+        .newElementSize = 0
     };
     al_add(st->streamOps, &so);
     st->operationCount++;
@@ -137,31 +150,53 @@ StreamElement strm_start(Stream* st){
         .curernt = 0,
         .elementSize = st->source->elementSize
     };
-    return st->getNext((void*)st, se);
+    return se;
 }
 
 int even(void* val){
-    printf("even\n");
+    //printf("even\n");
     int* i = val;
     return *i % 2 == 0;
 }
 
+int unEven(void* val){
+    //printf("even\n");
+    
+    return 1 - even(val);
+}
+
+void* addOne(void* val){
+    //printf("even\n");
+     int* i = val;
+    *i += 1;
+    return i;
+}
+
 void* doubleIt(void* val){
-    printf("doubleIt\n");
+    //printf("doubleIt\n");
     int* i = val;
     *i = *i+*i;
     return i;
 }
 
 void* toDouble(void* val){
-    printf("toDouble\n");
+    //printf("toDouble\n");
     int* i = val;
     double* new = malloc(sizeof(double));
     *new = (double) *i;
-    printf("double val %f\n", *new);
+    //printf("double val %f\n", *new);
     return new;
 }
 
+StreamElement applyUntil(Stream* st, StreamElement se, int index) {
+    for(int i = 0; i < st->operationCount && i < index; i++){
+        //printf("apply operand i=%d\n", i);
+        StreamOperation so = *((StreamOperation*) al_get(st->streamOps, i));
+        se = apply(st, se, so);
+    }
+    return se; 
+}
+ 
 void* strm_collect(Stream* st, Collector collector){
     
     void* collection = 0;
@@ -169,26 +204,25 @@ void* strm_collect(Stream* st, Collector collector){
     StreamElement se = strm_start(st);
     int stop = 0;
     do {
-        printf("getting next\n");
         se = st->getNext(st, se);
         if(se.pos == -1){
-            printf("next was end\n");
             break;
         }
-        printf("el pos was %d\n", se.pos);
-        printf("el value was %d\n", *((int*) se.curernt));
 
-        for(int i = 0; i < st->operationCount; i++){
-
-            printf("get operand i=%d\n", i);
-            StreamOperation so = *((StreamOperation*) al_get(st->streamOps, i));
-            se = apply(st, se, so);
-        }
+        se = applyUntil(st, se, st->streamOps->length);
         if(collection == 0){
              collection = collector.allocate(se.elementSize);
         }
-        stop = collector.accumulate(collection, se.curernt);
-    } while (stop == 0);
+
+        if(se.pos != -1){
+            stop = collector.accumulate(collection, se.curernt);
+        }
+
+    } while (stop != 1 && se.pos != -1);
+
+    if(collection == 0){
+        collection = collector.allocate(st->source->elementSize);
+    }
 
     return collection;
 }
@@ -197,20 +231,27 @@ struct test {
 };
 
 void* toTest(void* val){
-    printf("toTest\n");
+    //printf("toTest\n");
     int* i = val;
     struct test* new = malloc(sizeof(struct test));
-    new->a = 5;
+    new->a = *i;
+    free(val);
     return new;
 }
 
 
 void* testToInt(void* val){
-    printf("toTest\n");
+    //printf("toTest\n");
     struct test* value = val;
     int* new = malloc(sizeof(int));
     *new = value->a;
+    free(val);
     return new;
+}
+
+void* printInt(void* val){
+    printf("%d\n", *((int *)val));
+    return val;
 }
 
 void printDoubleArrayList(ArrayList *list) {
@@ -232,6 +273,7 @@ void printTestArrayList(ArrayList *list) {
 }
 
 void main(){
+    // todo support flat map
     ArrayList* al = al_new(sizeof(int));
     int n1 = 1;
     int n2 = 2;
@@ -242,25 +284,31 @@ void main(){
     al_add(al,&n1);
     al_add(al,&n2);
     al_add(al,&n3);
-    al_add(al,&n3);
     al_add(al,&n4);
     al_add(al,&n5);
     al_add(al,&n6);
+
+    printf("stream source\n");
+    printf("[ ");
+    printIntArrayList(al);
+    printf("]\n");
     Stream st = strm_of(al);
     strm_filter(&st,even); 
     strm_map(&st, doubleIt);
-    strm_map_to(&st, toTest, sizeof(struct test));
-    strm_map_to(&st, testToInt, sizeof(int));
-    strm_map(&st, doubleIt);
-    strm_map_to(&st, toDouble, sizeof(double));
-
+    strm_map(&st, printInt);
+    strm_filter(&st,unEven); 
+    //strm_map_to(&st, toTest, sizeof(struct test));
+    //strm_map(&st, addOne);
+    //strm_map_to(&st, toDouble, sizeof(double));
+    
     Collector c = {
         .allocate = (Allocator) al_new,
         .accumulate = (Accumulator) al_add
     };
+
     ArrayList* collected = (ArrayList*) strm_collect(&st, c);
     printf("collected result\n");
     printf("[ ");
     printDoubleArrayList(collected);
-    printf(" ]");
+    printf("]\n");
 }
