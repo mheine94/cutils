@@ -1,15 +1,4 @@
-#include <stdlib.h>
-#include <string.h>
-
-#define INITIAL_CAPACITY 64;
-
-typedef struct {
-    int length;
-    int capacity;
-    size_t elementSize;
-    void* array;
-} ArrayList;
-
+#include "arraylist.h"
 
 ArrayList* al_new(size_t elementSize){
     ArrayList* newList = calloc(1, sizeof(ArrayList));
